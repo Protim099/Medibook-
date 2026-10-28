@@ -1,0 +1,121 @@
+generator client { provider = "prisma-client-js" }
+datasource db { provider = "postgresql"; url = env("DATABASE_URL") }
+
+enum Role { ADMIN DOCTOR PATIENT }
+enum AppointmentStatus { PENDING CONFIRMED COMPLETED CANCELLED NO_SHOW }
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  name         String
+  role         Role     @default(PATIENT)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  patient      PatientProfile?
+  doctor       DoctorProfile?
+  notifications Notification[]
+  auditLogs    AuditLog[]
+}
+
+model PatientProfile {
+  id           String   @id @default(cuid())
+  userId       String   @unique
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  phone        String?
+  dateOfBirth  DateTime? @db.Date
+  appointments Appointment[]
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model Department {
+  id      String @id @default(cuid())
+  name    String @unique
+  doctors DoctorProfile[]
+}
+
+model DoctorProfile {
+  id             String   @id @default(cuid())
+  userId         String   @unique
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  departmentId   String
+  department     Department @relation(fields: [departmentId], references: [id])
+  qualifications String
+  experienceYears Int
+  consultationFee Int      // minor units (e.g. paisa/cents); no card data ever stored
+  photoUrl       String?
+  schedules      DoctorSchedule[]
+  leaves         DoctorLeave[]
+  appointments   Appointment[]
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  @@index([departmentId])
+}
+
+model DoctorSchedule {
+  id          String  @id @default(cuid())
+  doctorId    String
+  doctor      DoctorProfile @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  dayOfWeek   Int     // 0=Sun..6=Sat
+  startTime   String  // "09:00" clinic-local
+  endTime     String  // "17:00"
+  breakStart  String?
+  breakEnd    String?
+  slotMinutes Int     @default(30)
+  isActive    Boolean @default(true)
+  @@unique([doctorId, dayOfWeek])
+}
+
+model DoctorLeave {
+  id       String   @id @default(cuid())
+  doctorId String
+  doctor   DoctorProfile @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  date     DateTime @db.Date
+  reason   String?
+  @@unique([doctorId, date])
+}
+
+model Appointment {
+  id        String   @id @default(cuid())
+  doctorId  String
+  doctor    DoctorProfile @relation(fields: [doctorId], references: [id])
+  patientId String
+  patient   PatientProfile @relation(fields: [patientId], references: [id])
+  startsAt  DateTime            // stored in UTC
+  endsAt    DateTime
+  status    AppointmentStatus @default(PENDING)
+  reason    String
+  // Double-booking guard: "<doctorId>:<startsAt ISO>" while active, NULL when cancelled.
+  // Postgres allows many NULLs in a unique index, so cancelled slots can be rebooked.
+  slotKey   String?  @unique
+  reminderSentAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@index([doctorId, startsAt])
+  @@index([patientId, startsAt])
+  @@index([status, startsAt])
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      String   // BOOKED | CANCELLED | RESCHEDULED | REMINDER
+  title     String
+  body      String
+  readAt    DateTime?
+  createdAt DateTime @default(now())
+  @@index([userId, createdAt])
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  action    String
+  entity    String
+  entityId  String
+  createdAt DateTime @default(now())
+  @@index([entity, entityId])
+}
